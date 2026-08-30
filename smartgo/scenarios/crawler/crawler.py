@@ -1,7 +1,7 @@
 """SmartGo 内置爬虫执行器
 
 带请求重试、限速、反检测的 HTTP 爬虫。
-优先使用标准库（urllib），可选支持 requests。
+优先使用 requests + beautifulsoup4，未安装时回退标准库。
 与 SmartGo 安全防护层打通：爬取超时、死循环自动中断。
 """
 
@@ -15,6 +15,18 @@ from typing import List, Dict, Optional, Set, Callable
 from urllib.parse import urljoin, urlparse, urldefrag
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
+
+try:
+    import requests as _requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
+
+try:
+    from bs4 import BeautifulSoup
+    HAS_BS4 = True
+except ImportError:
+    HAS_BS4 = False
 
 
 # 反检测：User-Agent 轮换池
@@ -56,6 +68,7 @@ class CrawlConfig:
     proxy_list: List[str] = field(default_factory=list)
     respect_robots: bool = True           # 简单 robots 检查
     verify_ssl: bool = True               # SSL 证书验证（macOS 可能需关闭）
+    ponytail_level: str = "lite"          # full=强制标准库 | lite=允许额外库 | off=自由选
 
 
 @dataclass
@@ -184,47 +197,53 @@ class Crawler:
 
         for attempt in range(self.config.max_retries + 1):
             try:
-                # 构建请求
                 headers = self._build_headers(url)
-                req = Request(url, headers=headers)
-
-                # SSL context
-                import ssl
-                ctx = ssl.create_default_context()
-                if not self.config.verify_ssl:
-                    ctx.check_hostname = False
-                    ctx.verify_mode = ssl.CERT_NONE
-
-                # 代理
+                proxies = None
                 if self.config.use_proxy and self.config.proxy_list:
                     proxy = self._get_next_proxy()
-                    import urllib.request as urlreq
-                    proxy_handler = urlreq.ProxyHandler({
-                        'http': proxy, 'https': proxy
-                    })
-                    https_handler = urlreq.HTTPSHandler(context=ctx)
-                    opener = urlreq.build_opener(proxy_handler, https_handler)
-                    response = opener.open(req, timeout=self.config.timeout)
+                    proxies = {'http': proxy, 'https': proxy}
+
+                if HAS_REQUESTS and self.config.ponytail_level != "full":
+                    resp = _requests.get(
+                        url, headers=headers, timeout=self.config.timeout,
+                        proxies=proxies, verify=self.config.verify_ssl,
+                    )
+                    result.status_code = resp.status_code
+                    if resp.status_code in RETRY_STATUS_CODES and attempt < self.config.max_retries:
+                        backoff = self._get_backoff(attempt)
+                        print(f"[SmartGo 爬虫] {url} 返回 {resp.status_code}，"
+                              f"第{attempt+1}次重试，等待{backoff:.1f}s")
+                        time.sleep(backoff)
+                        continue
+                    resp.encoding = resp.encoding or 'utf-8'
+                    result.html = resp.text
                 else:
-                    import urllib.request as urlreq
-                    https_handler = urlreq.HTTPSHandler(context=ctx)
-                    opener = urlreq.build_opener(https_handler)
-                    response = opener.open(req, timeout=self.config.timeout)
+                    req = Request(url, headers=headers)
+                    import ssl
+                    ctx = ssl.create_default_context()
+                    if not self.config.verify_ssl:
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                    if proxies:
+                        import urllib.request as urlreq
+                        proxy_handler = urlreq.ProxyHandler(proxies)
+                        https_handler = urlreq.HTTPSHandler(context=ctx)
+                        opener = urlreq.build_opener(proxy_handler, https_handler)
+                        response = opener.open(req, timeout=self.config.timeout)
+                    else:
+                        import urllib.request as urlreq
+                        https_handler = urlreq.HTTPSHandler(context=ctx)
+                        opener = urlreq.build_opener(https_handler)
+                        response = opener.open(req, timeout=self.config.timeout)
+                    result.status_code = response.getcode()
+                    content_encoding = response.headers.get('Content-Encoding', '')
+                    raw_data = response.read()
+                    if 'gzip' in content_encoding:
+                        import gzip
+                        raw_data = gzip.decompress(raw_data)
+                    charset = response.headers.get_content_charset() or 'utf-8'
+                    result.html = raw_data.decode(charset, errors='replace')
 
-                result.status_code = response.getcode()
-
-                # 处理 gzip
-                content_encoding = response.headers.get('Content-Encoding', '')
-                raw_data = response.read()
-
-                if 'gzip' in content_encoding:
-                    import gzip
-                    import io
-                    raw_data = gzip.decompress(raw_data)
-
-                # 解码
-                charset = response.headers.get_content_charset() or 'utf-8'
-                result.html = raw_data.decode(charset, errors='replace')
                 result.text = self._strip_html(result.html)
                 result.title = self._extract_title(result.html)
                 result.success = True
@@ -310,38 +329,52 @@ class Crawler:
         return proxy
 
     def _strip_html(self, html: str) -> str:
-        """基础 HTML 文本提取（标准库实现，无需 BeautifulSoup）"""
-        # 去 script/style
+        """HTML 文本提取，按 Ponytail 等级选库"""
+        if HAS_BS4 and self.config.ponytail_level != "full":
+            soup = BeautifulSoup(html, 'html.parser')
+            for tag in soup(['script', 'style']):
+                tag.decompose()
+            text = soup.get_text(separator=' ', strip=True)
+            return re.sub(r'\s+', ' ', text).strip()
+        # 标准库 fallback
         html = re.sub(r'<(script|style)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        # 去标签
         text = re.sub(r'<[^>]+>', '', html)
-        # 去 HTML 实体（常见）
         entities = {
             '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>',
             '&quot;': '"', '&#39;': "'", '&ldquo;': '"', '&rdquo;': '"',
         }
         for entity, char in entities.items():
             text = text.replace(entity, char)
-        # 压缩空白
         text = re.sub(r'\s+', ' ', text).strip()
         return text
 
     def _extract_title(self, html: str) -> str:
         """提取页面标题"""
+        if HAS_BS4 and self.config.ponytail_level != "full":
+            soup = BeautifulSoup(html, 'html.parser')
+            title_tag = soup.find('title')
+            return title_tag.get_text(strip=True) if title_tag else ""
         match = re.search(r'<title[^>]*>(.*?)</title>', html, re.IGNORECASE | re.DOTALL)
         return match.group(1).strip() if match else ""
 
     def _extract_links(self, html: str, base_url: str) -> List[str]:
         """提取页面内链接"""
         links = []
-        # 提取 <a href="...">
+        if HAS_BS4 and self.config.ponytail_level != "full":
+            soup = BeautifulSoup(html, 'html.parser')
+            for a_tag in soup.find_all('a', href=True):
+                href = a_tag['href'].strip()
+                if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
+                    continue
+                full_url = urljoin(base_url, href)
+                full_url = urldefrag(full_url)[0]
+                links.append(full_url)
+            return links
         for match in re.finditer(r'<a[^>]+href=["\']([^"\']+)["\']', html, re.IGNORECASE):
             href = match.group(1).strip()
             if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
                 continue
-            # 相对路径转绝对路径
             full_url = urljoin(base_url, href)
-            # 去掉 fragment
             full_url = urldefrag(full_url)[0]
             links.append(full_url)
         return links
