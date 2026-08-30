@@ -9,3 +9,5 @@ venv/
 build/
 dist/
 .DS_Store
+smartgo_crawl_*.json
+smartgo_crawl_*.csv
