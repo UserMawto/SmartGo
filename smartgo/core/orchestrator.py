@@ -210,6 +210,9 @@ class SmartGoOrchestrator:
 
             # 执行子任务（通过回调）
             ponytail_prompt = self.ponytail.get_constraint_prompt()
+            # 追加 Layer2 Superpowers 状态，供执行器联动
+            sp_flag = "on" if superpowers_on else "off"
+            ponytail_prompt += f" [SmartGo Superpowers={sp_flag}]"
             st_result = subtask_executor(st_name, ponytail_prompt)
 
             if st_result is None:

@@ -59,22 +59,26 @@ class BugFixReport:
 class CodeFixer:
     """修 bug 执行器
 
-    Ponytail 分级行为：
-      full  — 只扫描报告，不改文件（tiny_fix：最小改动，先看清楚再说）
-      lite  — 扫描 + 自动修复（normal_feature：合理修复）
-      off   — 扫描 + 修复 + 跑测试验证（big_project：全套保障）
+    Layer4 Ponytail（代码风格/改动范围）：
+      full  — 只扫描报告，不改文件
+      lite  — 扫描 + 自动修复
+      off   — 扫描 + 修复（不额外限制代码风格）
+
+    Layer2 Superpowers（工程流程，独立开关）：
+      superpowers_enabled=True — 修复后跑测试验证（TDD 流程）
 
     用法：
         from smartgo.scenarios.code_fix.fixer import CodeFixer
-        fixer = CodeFixer(ponytail_level="lite")
+        fixer = CodeFixer(ponytail_level="lite", superpowers_enabled=False)
         result = fixer.fix_file("app.py", "TypeError on line 42")
     """
 
     def __init__(self, auto_test: bool = False, test_cmd: str = "",
-                 ponytail_level: str = "lite"):
+                 ponytail_level: str = "lite", superpowers_enabled: bool = False):
         self.auto_test = auto_test
         self.test_cmd = test_cmd
         self.ponytail_level = ponytail_level
+        self.superpowers_enabled = superpowers_enabled
 
     def fix_file(self, file_path: str, bug_description: str = "") -> BugFixReport:
         """修复指定文件中的 bug"""
@@ -139,10 +143,8 @@ class CodeFixer:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(fixed)
 
-        # ponytail=off：修复后跑测试验证
-        if self.ponytail_level == "off" and self.test_cmd:
-            report.test_passed, report.test_output = self._run_test()
-        elif self.auto_test and self.test_cmd:
+        # Layer2 Superpowers：跑测试验证（TDD 流程）
+        if self.superpowers_enabled and self.test_cmd:
             report.test_passed, report.test_output = self._run_test()
 
         return report
@@ -183,13 +185,16 @@ class CodeFixer:
             print(f"\n--- 执行子任务：{subtask_name} ---")
             print(f"Ponytail约束：{ponytail_prompt[:60]}...")
 
-            # 从 ponytail_prompt 提取等级联动
+            # 从 ponytail_prompt 提取 Layer4 等级
             if "Ponytail=full" in ponytail_prompt:
                 self.ponytail_level = "full"
             elif "Ponytail=off" in ponytail_prompt:
                 self.ponytail_level = "off"
             else:
                 self.ponytail_level = "lite"
+
+            # 从 ponytail_prompt 提取 Layer2 Superpowers 状态
+            self.superpowers_enabled = "Superpowers=on" in ponytail_prompt
 
             if subtask_name == "分析bug":
                 return SubtaskResult(

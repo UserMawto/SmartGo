@@ -86,41 +86,39 @@ class ScaffoldReport:
 class ProjectScaffolder:
     """项目脚手架执行器
 
-    Ponytail 分级行为：
-      full  — 最小结构（仅 src/main.py + requirements.txt + .gitignore）
-      lite  — 标准结构（完整模板文件，含 README + tests + config）
-      off   — 完整结构（标准 + CI 配置 + Makefile + CHANGELOG + docs）
+    Layer4 Ponytail（生成文件范围）：
+      full  — 最小结构（仅核心文件：main.py + requirements + .gitignore）
+      lite  — 标准结构（完整模板：README + tests + config）
+      off   — 标准结构（不额外限制）
+
+    Layer2 Superpowers（工程流程，独立开关）：
+      superpowers_enabled=True — 追加 CI 配置 + Makefile + CHANGELOG
 
     用法：
         from smartgo.scenarios.scaffold.scaffolder import ProjectScaffolder
-        scaffolder = ProjectScaffolder(ponytail_level="lite")
+        scaffolder = ProjectScaffolder(ponytail_level="lite", superpowers_enabled=False)
         report = scaffolder.create("my_app", "python_web")
     """
 
-    # ponytail=full 时只生成这些核心文件
     ESSENTIAL_FILES = {"README.md", "requirements.txt", ".gitignore", "src/main.py",
                        "src/__init__.py", "pyproject.toml"}
 
-    # ponytail=off 时额外生成这些文件
-    EXTRA_FILES = {
+    # Layer2 Superpowers 开启时追加的工程文件
+    SUPERPOWERS_FILES = {
         "Makefile": ".PHONY: install test lint run\n\ninstall:\n\tpip install -r requirements.txt\n\ntest:\n\tpython3 -m pytest tests/ -v\n\nlint:\n\tpython3 -m flake8 src/\n\nrun:\n\tpython3 -m src.main\n",
         "CHANGELOG.md": "# Changelog\n\n## [0.1.0] - Initial release\n",
         ".github/workflows/ci.yml": "name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: '3.11'\n      - run: pip install -r requirements.txt\n      - run: python -m pytest tests/ -v\n",
     }
 
-    def __init__(self, git_init: bool = False, ponytail_level: str = "lite"):
+    def __init__(self, git_init: bool = False, ponytail_level: str = "lite",
+                 superpowers_enabled: bool = False):
         self.git_init = git_init
         self.ponytail_level = ponytail_level
+        self.superpowers_enabled = superpowers_enabled
 
     def create(self, project_name: str, template: str = "python_web",
                base_dir: str = ".") -> ScaffoldReport:
-        """创建项目
-
-        Args:
-            project_name: 项目名
-            template: 模板名（python_web / python_cli / python_package）
-            base_dir: 基础目录
-        """
+        """创建项目"""
         report = ScaffoldReport(
             project_name=project_name,
             template=template,
@@ -137,27 +135,24 @@ class ProjectScaffolder:
 
         os.makedirs(project_path, exist_ok=True)
 
-        # 创建子目录
         for d in tmpl["structure"]["dirs"]:
             dir_path = d.replace("{package_name}", package_name)
             full_path = os.path.join(project_path, dir_path)
             os.makedirs(full_path, exist_ok=True)
             report.dirs_created += 1
 
-        # 按 ponytail 等级筛选文件
+        # Layer4 Ponytail：按等级筛选文件
         all_files = dict(tmpl["structure"]["files"])
         if self.ponytail_level == "full":
-            # 只保留核心文件
             all_files = {k: v for k, v in all_files.items()
                          if k in self.ESSENTIAL_FILES}
-        elif self.ponytail_level == "off":
-            # 追加额外文件
-            all_files.update(self.EXTRA_FILES)
-            # 确保目录存在
+
+        # Layer2 Superpowers：追加工程文件
+        if self.superpowers_enabled:
+            all_files.update(self.SUPERPOWERS_FILES)
             os.makedirs(os.path.join(project_path, ".github", "workflows"), exist_ok=True)
             os.makedirs(os.path.join(project_path, "docs"), exist_ok=True)
 
-        # 创建文件
         for fname, content in all_files.items():
             fname_resolved = fname.replace("{package_name}", package_name)
             content_resolved = content.replace("{project_name}", project_name).replace("{package_name}", package_name)
@@ -215,13 +210,16 @@ class ProjectScaffolder:
             print(f"\n--- 执行子任务：{subtask_name} ---")
             print(f"Ponytail约束：{ponytail_prompt[:60]}...")
 
-            # 从 ponytail_prompt 提取等级联动
+            # Layer4 Ponytail 等级
             if "Ponytail=full" in ponytail_prompt:
                 scaffolder.ponytail_level = "full"
             elif "Ponytail=off" in ponytail_prompt:
                 scaffolder.ponytail_level = "off"
             else:
                 scaffolder.ponytail_level = "lite"
+
+            # Layer2 Superpowers 状态
+            scaffolder.superpowers_enabled = "Superpowers=on" in ponytail_prompt
 
             if subtask_name == "规划项目结构":
                 tmpl = PROJECT_TEMPLATES.get(template, {})

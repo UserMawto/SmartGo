@@ -68,13 +68,14 @@ class CrawlTaskBuilder:
         extract_func = extract_fn or self._default_extract
 
         def subtask_executor(subtask_name: str, ponytail_prompt: str) -> SubtaskResult:
-            # 从 ponytail_prompt 提取等级，联动库选择
+            # Layer4 Ponytail 等级
             if "Ponytail=full" in ponytail_prompt:
                 crawl_config.ponytail_level = "full"
             elif "Ponytail=off" in ponytail_prompt:
                 crawl_config.ponytail_level = "off"
             else:
                 crawl_config.ponytail_level = "lite"
+            # Layer2 Superpowers 状态（爬虫暂无 Superpowers 联动行为，保留传递）
             return CrawlExecutor.execute_subtask(
                 subtask_name=subtask_name,
                 crawler=crawler,

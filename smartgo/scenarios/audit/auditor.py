@@ -137,22 +137,26 @@ class AuditReport:
 class ProjectAuditor:
     """项目审计执行器
 
-    Ponytail 分级行为：
-      full  — 只扫安全漏洞（tiny_fix：快速排雷）
-      lite  — 安全 + 异味 + 健康（normal_feature：标准体检）
-      off   — 全 5 维度深度扫描（big_project：全面审计）
+    Layer4 Ponytail（扫描深度/输出量）：
+      full  — 只扫安全漏洞
+      lite  — 安全 + 异味 + 健康 + 依赖
+      off   — 同 lite（不额外限制扫描范围）
+
+    Layer2 Superpowers（工程流程，独立开关）：
+      superpowers_enabled=True — 追加最佳实践覆盖率（type hint + docstring）
 
     用法：
         from smartgo.scenarios.audit.auditor import ProjectAuditor
-        auditor = ProjectAuditor(ponytail_level="lite")
+        auditor = ProjectAuditor(ponytail_level="lite", superpowers_enabled=False)
         report = auditor.audit("/path/to/project")
     """
 
-    def __init__(self, ponytail_level: str = "lite"):
+    def __init__(self, ponytail_level: str = "lite", superpowers_enabled: bool = False):
         self.ponytail_level = ponytail_level
+        self.superpowers_enabled = superpowers_enabled
 
     def audit(self, project_path: str, skip_dirs: List[str] = None) -> AuditReport:
-        """执行项目审计，按 Ponytail 等级控制扫描深度"""
+        """执行项目审计"""
         if skip_dirs is None:
             skip_dirs = {".git", "__pycache__", "node_modules", "venv", ".venv",
                          "env", ".env", "dist", "build", ".idea", ".vscode"}
@@ -167,7 +171,6 @@ class ProjectAuditor:
         if self.ponytail_level != "full":
             self._check_health(project_path, report)
 
-        # 扫描所有 Python 文件
         py_files = []
         for root, dirs, files in os.walk(project_path):
             dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
@@ -191,15 +194,14 @@ class ProjectAuditor:
             if self.ponytail_level != "full":
                 self._scan_code_smells(rel_path, content, report)
 
-            # ponytail=off：最佳实践
-            if self.ponytail_level == "off":
+            # Layer2 Superpowers：最佳实践覆盖率
+            if self.superpowers_enabled:
                 self._scan_practices(rel_path, content, fpath, report)
 
         # ponytail=lite/off：依赖检查
         if self.ponytail_level != "full":
             self._check_dependencies(project_path, py_files, report)
 
-        # 汇总
         self._print_summary(report)
         return report
 
@@ -478,8 +480,8 @@ class ProjectAuditor:
             for msg in report.dependency_issues:
                 print(f"  ⚠ {msg}")
 
-        # ponytail=off：最佳实践覆盖率
-        if self.ponytail_level == "off":
+        # Layer2 Superpowers：最佳实践覆盖率
+        if self.superpowers_enabled:
             print(f"\n最佳实践：")
             print(f"  Type Hint 覆盖率：{report.type_hint_coverage:.1f}%")
             print(f"  Docstring 覆盖率：{report.docstring_coverage:.1f}%")
@@ -491,13 +493,16 @@ class ProjectAuditor:
             print(f"\n--- 执行子任务：{subtask_name} ---")
             print(f"Ponytail约束：{ponytail_prompt[:60]}...")
 
-            # 从 ponytail_prompt 提取等级联动
+            # Layer4 Ponytail 等级
             if "Ponytail=full" in ponytail_prompt:
                 self.ponytail_level = "full"
             elif "Ponytail=off" in ponytail_prompt:
                 self.ponytail_level = "off"
             else:
                 self.ponytail_level = "lite"
+
+            # Layer2 Superpowers 状态
+            self.superpowers_enabled = "Superpowers=on" in ponytail_prompt
 
             if subtask_name == "扫描安全漏洞":
                 # 只跑安全扫描
