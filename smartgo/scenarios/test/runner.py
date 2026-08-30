@@ -31,27 +31,41 @@ class TestResult:
 class TestRunner:
     """测试执行器
 
+    Ponytail 分级行为：
+      full  — 最小输出，只报通过/失败总数（tiny_fix：快速验证）
+      lite  — 标准输出 + 失败详情（normal_feature：定位问题）
+      off   — 完整输出 + 覆盖率分析（big_project：全套质量保障）
+
     用法：
-        from smartgo.test_runner import TestRunner
-        runner = TestRunner()
+        from smartgo.scenarios.test.runner import TestRunner
+        runner = TestRunner(ponytail_level="lite")
         result = runner.run_pytest("tests/")
     """
 
-    def __init__(self, timeout: int = 60, coverage: bool = False):
+    def __init__(self, timeout: int = 60, coverage: bool = False,
+                 ponytail_level: str = "lite"):
         self.timeout = timeout
         self.coverage = coverage
+        self.ponytail_level = ponytail_level
 
     def run_pytest(self, test_path: str = "tests/") -> TestResult:
         """执行 pytest 测试"""
-        cmd = ["python3", "-m", "pytest", test_path, "-v", "--tb=short"]
-        if self.coverage:
-            cmd.extend(["--cov", "--cov-report=term-missing"])
-
+        # ponytail=full：不带 -v，不加 coverage，最精简
+        if self.ponytail_level == "full":
+            cmd = ["python3", "-m", "pytest", test_path, "--tb=line"]
+        else:
+            cmd = ["python3", "-m", "pytest", test_path, "-v", "--tb=short"]
+            # ponytail=off：强制加覆盖率
+            if self.ponytail_level == "off" or self.coverage:
+                cmd.extend(["--cov", "--cov-report=term-missing"])
         return self._execute(cmd, "pytest")
 
     def run_unittest(self, test_path: str = "tests/") -> TestResult:
         """执行 unittest 测试"""
-        cmd = ["python3", "-m", "unittest", "discover", "-s", test_path, "-v"]
+        if self.ponytail_level == "full":
+            cmd = ["python3", "-m", "unittest", "discover", "-s", test_path]
+        else:
+            cmd = ["python3", "-m", "unittest", "discover", "-s", test_path, "-v"]
         return self._execute(cmd, "unittest")
 
     def run_custom(self, command: str) -> TestResult:
@@ -155,21 +169,40 @@ class TestRunner:
         )
 
     def _print_summary(self, result: TestResult):
-        """打印测试摘要"""
+        """打印测试摘要，按 Ponytail 等级控制输出量"""
         status = "✅ 通过" if result.failed == 0 and result.errors == 0 else "❌ 失败"
         print(f"[SmartGo 测试] {status}")
         print(f"  总数：{result.total} | 通过：{result.passed} | 失败：{result.failed} | 错误：{result.errors} | 跳过：{result.skipped}")
+        # ponytail=full：只报总数，不输出详情
+        if self.ponytail_level == "full":
+            return
+        # ponytail=lite：输出覆盖率 + 失败详情
         if result.coverage is not None:
             print(f"  覆盖率：{result.coverage}%")
         if result.failures_detail:
             for f in result.failures_detail[:5]:
                 print(f"  失败：{f['test']}")
+        # ponytail=off：输出完整原始日志摘要
+        if self.ponytail_level == "off" and result.raw_output:
+            lines = result.raw_output.strip().split("\n")
+            if len(lines) > 20:
+                print(f"  原始输出（最后20行）：")
+                for line in lines[-20:]:
+                    print(f"    {line}")
 
     def as_subtask_executor(self, test_path: str = "tests/"):
         """包装为 SmartGo subtask_executor 回调"""
         def executor(subtask_name: str, ponytail_prompt: str) -> SubtaskResult:
             print(f"\n--- 执行子任务：{subtask_name} ---")
             print(f"Ponytail约束：{ponytail_prompt[:60]}...")
+
+            # 从 ponytail_prompt 提取等级联动
+            if "Ponytail=full" in ponytail_prompt:
+                self.ponytail_level = "full"
+            elif "Ponytail=off" in ponytail_prompt:
+                self.ponytail_level = "off"
+            else:
+                self.ponytail_level = "lite"
 
             if subtask_name == "发现测试":
                 # 扫描测试文件

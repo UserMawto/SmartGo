@@ -137,14 +137,22 @@ class AuditReport:
 class ProjectAuditor:
     """项目审计执行器
 
+    Ponytail 分级行为：
+      full  — 只扫安全漏洞（tiny_fix：快速排雷）
+      lite  — 安全 + 异味 + 健康（normal_feature：标准体检）
+      off   — 全 5 维度深度扫描（big_project：全面审计）
+
     用法：
         from smartgo.scenarios.audit.auditor import ProjectAuditor
-        auditor = ProjectAuditor()
+        auditor = ProjectAuditor(ponytail_level="lite")
         report = auditor.audit("/path/to/project")
     """
 
+    def __init__(self, ponytail_level: str = "lite"):
+        self.ponytail_level = ponytail_level
+
     def audit(self, project_path: str, skip_dirs: List[str] = None) -> AuditReport:
-        """执行完整项目审计"""
+        """执行项目审计，按 Ponytail 等级控制扫描深度"""
         if skip_dirs is None:
             skip_dirs = {".git", "__pycache__", "node_modules", "venv", ".venv",
                          "env", ".env", "dist", "build", ".idea", ".vscode"}
@@ -155,10 +163,11 @@ class ProjectAuditor:
             report.health_issues.append(f"项目路径不存在：{project_path}")
             return report
 
-        # 1. 项目健康检查
-        self._check_health(project_path, report)
+        # ponytail=lite/off：项目健康检查
+        if self.ponytail_level != "full":
+            self._check_health(project_path, report)
 
-        # 2. 扫描所有 Python 文件
+        # 扫描所有 Python 文件
         py_files = []
         for root, dirs, files in os.walk(project_path):
             dirs[:] = [d for d in dirs if d not in skip_dirs and not d.startswith(".")]
@@ -175,17 +184,20 @@ class ProjectAuditor:
 
             rel_path = os.path.relpath(fpath, project_path)
 
-            # 3. 安全扫描
+            # 所有等级都做安全扫描
             self._scan_security(rel_path, content, report)
 
-            # 4. 代码异味
-            self._scan_code_smells(rel_path, content, report)
+            # ponytail=lite/off：代码异味
+            if self.ponytail_level != "full":
+                self._scan_code_smells(rel_path, content, report)
 
-            # 5. 最佳实践
-            self._scan_practices(rel_path, content, fpath, report)
+            # ponytail=off：最佳实践
+            if self.ponytail_level == "off":
+                self._scan_practices(rel_path, content, fpath, report)
 
-        # 6. 依赖检查
-        self._check_dependencies(project_path, py_files, report)
+        # ponytail=lite/off：依赖检查
+        if self.ponytail_level != "full":
+            self._check_dependencies(project_path, py_files, report)
 
         # 汇总
         self._print_summary(report)
@@ -416,7 +428,7 @@ class ProjectAuditor:
             report.dependency_issues.append(f"使用了但未声明：{dep}")
 
     def _print_summary(self, report: AuditReport):
-        """打印审计摘要"""
+        """打印审计摘要，按 Ponytail 等级控制输出维度"""
         print(f"\n{'='*50}")
         print(f"SmartGo 项目审计报告")
         print(f"{'='*50}")
@@ -433,6 +445,7 @@ class ProjectAuditor:
         print(f"  LOW:      {counts.get('LOW', 0)}")
         print(f"  总计:     {report.total_issues}")
 
+        # 安全问题：所有等级都输出
         if report.security_issues:
             print(f"\n安全问题（{len(report.security_issues)}）：")
             for issue in report.security_issues[:10]:
@@ -440,6 +453,12 @@ class ProjectAuditor:
             if len(report.security_issues) > 10:
                 print(f"  ... 还有 {len(report.security_issues)-10} 个")
 
+        # ponytail=full：只输出安全问题，到此为止
+        if self.ponytail_level == "full":
+            print(f"{'='*50}")
+            return
+
+        # ponytail=lite/off：输出代码异味
         if report.code_smells:
             print(f"\n代码异味（{len(report.code_smells)}）：")
             for issue in report.code_smells[:10]:
@@ -447,19 +466,23 @@ class ProjectAuditor:
             if len(report.code_smells) > 10:
                 print(f"  ... 还有 {len(report.code_smells)-10} 个")
 
+        # ponytail=lite/off：项目健康
         if report.health_issues:
             print(f"\n项目健康（{len(report.health_issues)}）：")
             for msg in report.health_issues:
                 print(f"  ⚠ {msg}")
 
+        # ponytail=lite/off：依赖问题
         if report.dependency_issues:
             print(f"\n依赖问题（{len(report.dependency_issues)}）：")
             for msg in report.dependency_issues:
                 print(f"  ⚠ {msg}")
 
-        print(f"\n最佳实践：")
-        print(f"  Type Hint 覆盖率：{report.type_hint_coverage:.1f}%")
-        print(f"  Docstring 覆盖率：{report.docstring_coverage:.1f}%")
+        # ponytail=off：最佳实践覆盖率
+        if self.ponytail_level == "off":
+            print(f"\n最佳实践：")
+            print(f"  Type Hint 覆盖率：{report.type_hint_coverage:.1f}%")
+            print(f"  Docstring 覆盖率：{report.docstring_coverage:.1f}%")
         print(f"{'='*50}")
 
     def as_subtask_executor(self, project_path: str):
@@ -467,6 +490,14 @@ class ProjectAuditor:
         def executor(subtask_name: str, ponytail_prompt: str) -> SubtaskResult:
             print(f"\n--- 执行子任务：{subtask_name} ---")
             print(f"Ponytail约束：{ponytail_prompt[:60]}...")
+
+            # 从 ponytail_prompt 提取等级联动
+            if "Ponytail=full" in ponytail_prompt:
+                self.ponytail_level = "full"
+            elif "Ponytail=off" in ponytail_prompt:
+                self.ponytail_level = "off"
+            else:
+                self.ponytail_level = "lite"
 
             if subtask_name == "扫描安全漏洞":
                 # 只跑安全扫描

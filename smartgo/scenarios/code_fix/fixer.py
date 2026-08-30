@@ -59,15 +59,22 @@ class BugFixReport:
 class CodeFixer:
     """修 bug 执行器
 
+    Ponytail 分级行为：
+      full  — 只扫描报告，不改文件（tiny_fix：最小改动，先看清楚再说）
+      lite  — 扫描 + 自动修复（normal_feature：合理修复）
+      off   — 扫描 + 修复 + 跑测试验证（big_project：全套保障）
+
     用法：
-        from smartgo.code_fixer import CodeFixer
-        fixer = CodeFixer()
+        from smartgo.scenarios.code_fix.fixer import CodeFixer
+        fixer = CodeFixer(ponytail_level="lite")
         result = fixer.fix_file("app.py", "TypeError on line 42")
     """
 
-    def __init__(self, auto_test: bool = False, test_cmd: str = ""):
+    def __init__(self, auto_test: bool = False, test_cmd: str = "",
+                 ponytail_level: str = "lite"):
         self.auto_test = auto_test
         self.test_cmd = test_cmd
+        self.ponytail_level = ponytail_level
 
     def fix_file(self, file_path: str, bug_description: str = "") -> BugFixReport:
         """修复指定文件中的 bug"""
@@ -81,7 +88,7 @@ class CodeFixer:
             content = f.read()
         report.original_content = content
 
-        # 匹配 bug 模式
+        # 匹配 bug 模式（所有等级都做扫描）
         matched = []
         for name, info in BUG_PATTERNS.items():
             matches = re.finditer(info["pattern"], content)
@@ -97,24 +104,26 @@ class CodeFixer:
         report.bugs_found = len(matched)
         report.patterns_matched = matched
 
-        # 自动修复简单模式
+        # ponytail=full：只报告，不修改文件
+        if self.ponytail_level == "full":
+            report.fixed_content = content
+            report.bugs_fixed = 0
+            return report
+
+        # ponytail=lite/off：扫描 + 自动修复
         fixed = content
         fixed_count = 0
 
-        # 修复 bare except
         fixed, n = re.subn(r"except\s*:", "except Exception as e:", fixed)
         fixed_count += n
 
-        # 修复 mutable default argument
         fixed, n = re.subn(
             r"def\s+(\w+)\s*\(([^)]*?)=\s*\[\]",
             r'def \1(\2=None',
             fixed,
         )
-        # 在函数体开头添加初始化（简化处理：只做标记）
         fixed_count += n
 
-        # 修复 print 缺少 f 前缀（含变量引用的字符串）
         fixed, n = re.subn(
             r'print\((["\'])(.*\{.*\}.*)\1\)',
             r'print(f\1\2\1)',
@@ -130,8 +139,10 @@ class CodeFixer:
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(fixed)
 
-        # 可选：跑测试验证
-        if self.auto_test and self.test_cmd:
+        # ponytail=off：修复后跑测试验证
+        if self.ponytail_level == "off" and self.test_cmd:
+            report.test_passed, report.test_output = self._run_test()
+        elif self.auto_test and self.test_cmd:
             report.test_passed, report.test_output = self._run_test()
 
         return report
@@ -171,6 +182,14 @@ class CodeFixer:
         def executor(subtask_name: str, ponytail_prompt: str) -> SubtaskResult:
             print(f"\n--- 执行子任务：{subtask_name} ---")
             print(f"Ponytail约束：{ponytail_prompt[:60]}...")
+
+            # 从 ponytail_prompt 提取等级联动
+            if "Ponytail=full" in ponytail_prompt:
+                self.ponytail_level = "full"
+            elif "Ponytail=off" in ponytail_prompt:
+                self.ponytail_level = "off"
+            else:
+                self.ponytail_level = "lite"
 
             if subtask_name == "分析bug":
                 return SubtaskResult(
