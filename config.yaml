@@ -1,0 +1,25 @@
+# SmartGo 智跑 默认配置
+# 可通过 --config 指定路径加载，也可运行时用 smartgo:* 指令覆盖
+
+smartgo:
+  # 运行模式：semi(半自动) | strict_auto(纯全自动) | safe_auto(安全自动,默认)
+  run_mode: safe_auto
+
+  # 日志粒度：step(每轮) | summary(汇总,默认) | off(关闭)
+  log_level: summary
+
+  telemetry:
+    calc_token_saved: true
+    save_log_to_file: false
+    log_file_path: ""
+
+  safety:
+    max_all_round: 30              # 全局最大总轮次
+    max_one_subtask_round: 10      # 单个子任务最大轮次
+    token_max_budget: 150000       # token总预算
+    loop_detection_window: 5       # 死循环检测窗口（最近N轮）
+    loop_similarity_threshold: 0.85  # 死循环相似度阈值
+
+  superpowers:
+    auto_open_token: 120000        # big_project自动开启Superpowers的token阈值
+    danger_task_token: 200000      # 高危任务token阈值

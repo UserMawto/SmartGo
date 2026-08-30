@@ -1,0 +1,5 @@
+pyyaml>=6.0
+
+# 以下为可选依赖，不安装也能用（标准库 fallback）
+# requests>=2.28      # 更好用的 HTTP 客户端（可选，默认用 urllib）
+# beautifulsoup4>=4.11 # 更强 HTML 解析（可选，默认用 re）
