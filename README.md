@@ -26,10 +26,12 @@ python3 -m smartgo.cli status
 | 层 | 模块 | 职责 |
 |---|---|---|
 | Layer1 | 任务分类器 | 判断难度，输出标签（tiny_fix/normal_feature/big_project/danger_task/explore_debug） |
-| Layer2 | 执行模式调度 | 自动选 ReAct / Plan&Execute / Plan&Execute+Reflection，按需启用 Superpowers |
+| Layer2 | 执行模式调度 | 自动选 ReAct / Plan&Execute / Plan&Execute+Reflection，按需启用 Superpowers（TDD/CI/覆盖率） |
 | Layer3 | 安全防护 | 轮次上限、token 预算、死循环检测、进度输出（强制生效） |
-| Layer4 | Ponytail 约束 | 分级代码精简（full/lite/off），避免过度冗余或过度保守 |
+| Layer4 | Ponytail 约束 | 分级代码精简（full/lite/off），只管代码风格/依赖/输出量，**不耦合 Superpowers** |
 | Layer5 | 观测日志 | 贯穿全程，真实消耗 + 预估节省 token，分 step/summary/off 粒度 |
+
+> **Layer4 和 Layer2 独立解耦**：`ponytail=off` 只解除代码风格约束，不会自动触发 TDD/CI/覆盖率。Superpowers 由 Layer2 独立控制。详见 [PONYTAIL_SPEC.md](PONYTAIL_SPEC.md)。
 
 ## 目录结构
 

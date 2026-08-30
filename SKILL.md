@@ -124,6 +124,18 @@ Superpowers 包含完整 TDD、子代理、git worktree、PR 交付流程，重�
 > 禁止一刀切永远 full；大项目不会被过度保守限制。
 > `explore_debug` 默认使用 `lite` 等级。
 
+### Layer4 与 Layer2 独立解耦（重要）
+> Ponytail（Layer4）和 Superpowers（Layer2）是**两个独立的层，不耦合**。
+>
+> | 层 | 管什么 | 不管什么 |
+> |---|---|---|
+> | Layer4 Ponytail | 代码风格、依赖选择、输出量、扫描深度 | 不管 TDD/CI/测试验证 |
+> | Layer2 Superpowers | TDD 验证、CI 配置、覆盖率分析、工程文件 | 不管代码风格/依赖选择 |
+>
+> `ponytail=off` 只意味着"解除代码风格约束"，**不会自动触发** Superpowers 的 TDD/CI/覆盖率行为。Superpowers 由 Layer2 独立控制开关。
+>
+> 场景执行器适配详见 [PONYTAIL_SPEC.md](PONYTAIL_SPEC.md)。
+
 ---
 
 ## Layer5 观测日志｜贯穿全程的独立观测层（非终点输出）
